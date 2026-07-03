@@ -52,6 +52,7 @@ struct Input_s
 	Endian_t endian = Endian_t::Little; /**< @brief Output endian. */
 	Algorithm_t algorithm = Algorithm_t::ModbusCRC; /**< @brief Hash algorithm. */
 	uint8_t alignment = 0; /**< @brief File size check divider. */
+	bool verify; /**< @brief Perform file verification. */
 };
 
 
@@ -67,7 +68,7 @@ struct File_s
 
 
 // ----- VARIABLES
-static constexpr char version[] = "sPostBuild v1.1r1 ; " __DATE__ " " __TIME__; /**< @brief Application version. */
+static constexpr char version[] = "sPostBuild v1.1rc1 ; " __DATE__ " " __TIME__; /**< @brief Application version. */
 
 static Input_s input; /**< @brief Input info from arguments. */
 static File_s fileInfo; /**< @brief Input file info. */
@@ -295,6 +296,45 @@ static int writeHash(std::fstream& file)
 	return 0;
 }
 
+/**
+ * @brief Load size and hash from file.
+ * 
+ * @param file Reference to input file.
+ * @param output Reference to output.
+ * 
+ * @return \c 0 on success. 
+ */
+static int loadFileInfo(std::fstream& file, File_s& output)
+{
+	uint32_t tmp = 0;
+
+	file.seekg(input.sizeOffset, std::ios::beg);
+	if (!file.read((char*)&output.size, sizeof(output.size)))
+	{
+		std::cerr << "File size read fail" << std::endl;
+		return 1;
+	}
+
+	file.seekg(input.hashOffset, std::ios::beg);
+	if (!file.read((char*)&output.hash, sizeof(output.hash)))
+	{
+		std::cerr << "File hash read fail" << std::endl;
+		return 1;
+	}	
+
+	// Swap endian if needed
+	if (input.endian == Endian_t::Big)
+	{
+		tmp = output.size;
+		swapEndian(&output.size, &tmp, sizeof(output.size));
+
+		tmp = output.hash;
+		swapEndian(&output.hash, &tmp, sizeof(output.size));		
+	}
+
+	return 0;
+}
+
 
 // ----- FUNCTION DEFINITIONS
 /**
@@ -313,6 +353,7 @@ int main(int argc, char* argv[])
 	app.add_option("--file", input.filePath, "Path to .bin file to process")->required();
 	app.add_option<uint32_t>("--hash-offset", input.hashOffset, "Hash word offset in the file")->required();
 	app.add_option<uint32_t>("--size-offset", input.sizeOffset, "Size word offset in the file")->required();
+	app.add_flag("--verify", input.verify, "Perform file verification");
 	app.add_option<uint8_t>("--alignment", input.alignment, "File size divider");
 	app.add_option("--algorithm", tmpAlgorithm, "Hash algorithm to use")->check(CLI::IsMember({"modbuscrc"}));
 	app.add_option("--pre-salt", input.preSalt, "Pre file salt string");
@@ -320,10 +361,19 @@ int main(int argc, char* argv[])
 	app.add_flag_callback("--big-endian", [&] { input.endian = Endian_t::Big; });
 
 	CLI11_PARSE(app, argc, argv);
-	input.algorithm = Algorithm_t::ModbusCRC;
+	input.algorithm = Algorithm_t::ModbusCRC; // SOON: Remove after new checksum is added
 
 	// Open file
-	std::fstream file(input.filePath, std::ios::binary | std::ios::in | std::ios::out);
+	std::fstream file;
+	if (!input.verify)
+	{
+		file.open(input.filePath, std::ios::binary | std::ios::in | std::ios::out);
+	}
+	else
+	{
+		file.open(input.filePath, std::ios::binary | std::ios::in);
+	}
+	
 	if (!file)
 	{
 		std::cerr << "File open fail" << std::endl;
@@ -357,7 +407,13 @@ int main(int argc, char* argv[])
 		return 1;
 	}	
 
-	if (input.hashOffset == input.sizeOffset)
+	int32_t offsetDiff = input.hashOffset - input.sizeOffset;
+	if (offsetDiff < 0)
+	{
+		offsetDiff *= -1;
+	}
+
+	if (offsetDiff < (int32_t)sizeof(uint32_t))
 	{
 		std::cerr << "Offset overlap" << std::endl;
 		file.close();
@@ -367,11 +423,14 @@ int main(int argc, char* argv[])
 	// SOON: Add partial overlap check
 
 	// Write size to file
-	if (writeSize(file))
+	if (!input.verify)
 	{
-		std::cerr << "Size write fail" << std::endl;
-		file.close();
-		return 1;
+		if (writeSize(file))
+		{
+			std::cerr << "Size write fail" << std::endl;
+			file.close();
+			return 1;
+		}
 	}
 
 	// Calculate hash
@@ -382,14 +441,16 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
-	if (writeHash(file))
+	if (!input.verify)
 	{
-		std::cerr << "Hash write fail" << std::endl;
-		file.close();
-		return 1;
+		if (writeHash(file))
+		{
+			std::cerr << "Hash write fail" << std::endl;
+			file.close();
+			return 1;
+		}
 	}
-	file.close();
-
+	
 	if (input.preSalt.length())
 	{
 		std::cout << "[sPostBuild] Pre salt '" << input.preSalt << "'" << std::endl;
@@ -400,9 +461,33 @@ int main(int argc, char* argv[])
 		std::cout << "[sPostBuild] Post salt '" << input.postSalt << "'" << std::endl;
 	}	
 
-	std::cout << "[sPostBuild] Size " << fileInfo.size << "B and hash " << std::hex << fileInfo.hash << " for file '" << input.filePath << "'" << std::endl;
+	if (!input.verify)
+	{
+		std::cout << "[sPostBuild] Size " << fileInfo.size << "B and hash " << std::hex << fileInfo.hash << " for file '" << input.filePath << "'" << std::endl;
+		file.close();
+	}
+	else
+	{
+		File_s tmpFileInfo;
 
-	//std::cin.get();
+		if (loadFileInfo(file, tmpFileInfo))
+		{
+			std::cerr << "Failed to load file info" << std::endl;
+			file.close();
+			return 1;
+		}
+		
+		file.close();
+		if (tmpFileInfo.size != fileInfo.size ||
+			tmpFileInfo.hash != fileInfo.hash)
+		{
+			std::cerr << "[sPostBuild] File not valid ; " << tmpFileInfo.size << "B / " << fileInfo.size << "B ; " << std::hex << tmpFileInfo.hash << " / " << fileInfo.hash << std::endl;
+			return 1;
+		}
+
+		std::cout << "[sPostBuild] File OK" << std::endl;
+	}
+
 	return 0;
 }
 

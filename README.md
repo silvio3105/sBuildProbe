@@ -4,17 +4,22 @@
 Simple tool for completing [sBuildInfo](https://github.com/silvio3105/sBuildInfo) struct after embedded application build. Application writes `--file` size and calculated hash to provided location in `--file`.
 It is possible to add pre file and/or post file salt string to hash calculation for additional layer of security before device update.
 
-Application is built for 64-bit Windows 10 or newer using GCC 16.1.0 and MinGW-w64 14.0.0.
+Application is built for Windows x64 using GCC v16.1.0-5 from MSYS2 v3.6.9-2.
+Tested on Windows 10.
 
 
 # Hash algorithms
 
-For now only Modbus CRC is supported.
+For now only Modbus CRC(16-bit) is supported.
 
 
 # Salt
 
 It is possible to add pre file data and/or post file data salt to hash calculation. Salt is used to prevent updating device with unoffical application.
+
+# Verification
+
+It is possible to just verify `--file` by adding `--verfiy` flag to arguments. If `--verify` flag is provided no writes will be made to the `--file`.
 
 
 # Arguments
@@ -26,6 +31,7 @@ List of supported arguments
 | --file * 					| Path to `.bin` file to process							|
 | --hash-offset *			| Offset of hash bytes in `--file` in bytes(eg. 0x4)		|
 | --size-offset	*			| Offset of size bytes in `--file` in bytes(eg. 0x8)		|
+| --verify					| Perform verification on `--file`							|
 | --big-endian				| Set output format to big endian							|
 | --salt-pre				| Salt string to process before `--file` data				|
 | --salt-post 				| Salt string to process after `--file`	data				|

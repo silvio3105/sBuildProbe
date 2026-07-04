@@ -237,28 +237,33 @@ static uint32_t getHash(std::fstream& file, uint32_t& output)
 	}
 
 	// Before checksum
-	file.seekg(0, std::ios::beg);
-	std::vector<char> buffer(input.hashOffset);
-
-	if (!file.read(buffer.data(), input.hashOffset))
+	if (input.hashOffset)
 	{
-		std::cerr << "Read 1 fail" << std::endl;
-		return 1;
+		file.seekg(0, std::ios::beg);
+		std::vector<char> buffer(input.hashOffset);
+
+		if (!file.read(buffer.data(), input.hashOffset))
+		{
+			std::cerr << "Read 1 fail" << std::endl;
+			return 1;
+		}
+		ModbusCRC::calculate(output, buffer.data(), input.hashOffset);
 	}
-	ModbusCRC::calculate(output, buffer.data(), input.hashOffset);
 
 	// After checksum
 	const uint32_t size = fileInfo.size - (input.hashOffset + sizeof(fileInfo.hash));
-	file.seekg(input.hashOffset + sizeof(fileInfo.hash), std::ios::beg);
-
-	buffer.clear();
-	buffer.resize(size);
-	if (!file.read(buffer.data(), size))
+	if (size)
 	{
-		std::cerr << "Read 2 fail" << std::endl;
-		return 1;
+		std::vector<char> buffer(size);
+
+		file.seekg(input.hashOffset + sizeof(fileInfo.hash), std::ios::beg);
+		if (!file.read(buffer.data(), size))
+		{
+			std::cerr << "Read 2 fail" << std::endl;
+			return 1;
+		}
+		ModbusCRC::calculate(output, buffer.data(), size);
 	}
-	ModbusCRC::calculate(output, buffer.data(), size);
 
 	// Insert post salt
 	if (input.postSalt.length())
